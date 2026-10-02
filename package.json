@@ -1,0 +1,9 @@
+{
+  "name": "calcula-scientific-calculator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dependency-free scientific calculator with an optional local history backend.",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

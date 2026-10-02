@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Aesthetic neumorphic scientific calculator with persistent calculation history." />
+  <title>Calcula — Scientific Calculator</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="ambient ambient-a" aria-hidden="true"></div>
+  <div class="ambient ambient-b" aria-hidden="true"></div>
+
+  <main class="app-shell">
+    <header class="app-header">
+      <div class="brand-block">
+        <div class="brand-mark" aria-hidden="true">∑</div>
+        <div>
+          <p class="eyebrow">Precision workspace</p>
+          <h1>Calcula</h1>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="angleToggle" class="pill-btn" type="button" aria-label="Toggle angle mode">DEG</button>
+        <button id="clearHistory" class="ghost-btn" type="button">Clear history</button>
+      </div>
+    </header>
+
+    <section class="workspace" aria-label="Scientific calculator workspace">
+      <section class="calculator-panel neumorph">
+        <div class="display-card neumorph-inset" aria-live="polite">
+          <div id="expressionPreview" class="expression-preview">Ready when you are</div>
+          <div id="display" class="display-value">0</div>
+          <div class="display-meta">
+            <span id="memoryIndicator" class="meta-chip hidden">M</span>
+            <span id="angleIndicator" class="meta-chip">DEG</span>
+            <span id="statusIndicator" class="status-text">Scientific mode</span>
+          </div>
+        </div>
+
+        <div class="utility-row" id="utilityRow" aria-label="Calculator memory and editing controls">
+          <button class="utility-btn" data-action="memory-clear" type="button" title="MC — Clear stored memory" aria-label="Memory clear">MC</button>
+          <button class="utility-btn" data-action="memory-recall" type="button" title="MR — Recall stored memory" aria-label="Memory recall">MR</button>
+          <button class="utility-btn" data-action="memory-add" type="button" title="M+ — Add current value to memory" aria-label="Memory add">M+</button>
+          <button class="utility-btn" data-action="memory-subtract" type="button" title="M− — Subtract current value from memory" aria-label="Memory subtract">M−</button>
+          <button class="utility-btn" data-action="backspace" type="button" aria-label="Backspace" title="Backspace — Delete the last input">⌫</button>
+          <button class="utility-btn danger" data-action="clear" type="button" title="AC — Clear the current calculation" aria-label="All clear">AC</button>
+        </div>
+
+        <div class="keypad" id="keypad">
+          <div class="key-group function-group">
+            <div class="group-label">Scientific</div>
+            <div class="key-grid six">
+              <button class="key function" data-value="sin(" type="button">sin</button>
+              <button class="key function" data-value="cos(" type="button">cos</button>
+              <button class="key function" data-value="tan(" type="button">tan</button>
+              <button class="key function" data-value="log(" type="button">log</button>
+              <button class="key function" data-value="ln(" type="button">ln</button>
+              <button class="key function" data-value="sqrt(" type="button">√</button>
+              <button class="key function" data-value="asin(" type="button">sin⁻¹</button>
+              <button class="key function" data-value="acos(" type="button">cos⁻¹</button>
+              <button class="key function" data-value="atan(" type="button">tan⁻¹</button>
+              <button class="key function" data-value="exp(" type="button">eˣ</button>
+              <button class="key function" data-value="abs(" type="button">|x|</button>
+              <button class="key function" data-value="cbrt(" type="button">∛</button>
+            </div>
+          </div>
+
+          <div class="key-group secondary-group">
+            <div class="group-label">Constants & transforms</div>
+            <div class="key-grid six">
+              <button class="key constant" data-value="π" type="button">π</button>
+              <button class="key constant" data-value="e" type="button">e</button>
+              <button class="key operator" data-value="^" type="button">xʸ</button>
+              <button class="key operator" data-value="%" type="button">%</button>
+              <button class="key operator" data-value="!" type="button">x!</button>
+              <button class="key operator" data-value="mod" type="button">mod</button>
+            </div>
+          </div>
+
+          <div class="key-group main-group">
+            <div class="key-grid five">
+              <button class="key bracket" data-value="(" type="button">(</button>
+              <button class="key bracket" data-value=")" type="button">)</button>
+              <button class="key utility-accent" data-action="sign" type="button">±</button>
+              <button class="key operator" data-value="÷" type="button">÷</button>
+              <button class="key operator" data-value="×" type="button">×</button>
+
+              <button class="key number" data-value="7" type="button">7</button>
+              <button class="key number" data-value="8" type="button">8</button>
+              <button class="key number" data-value="9" type="button">9</button>
+              <button class="key operator" data-value="−" type="button">−</button>
+              <button class="key equals tall" data-action="equals" type="button">=</button>
+
+              <button class="key number" data-value="4" type="button">4</button>
+              <button class="key number" data-value="5" type="button">5</button>
+              <button class="key number" data-value="6" type="button">6</button>
+              <button class="key operator" data-value="+" type="button">+</button>
+              <button class="key action" data-action="ans" type="button" title="ANS — Insert the previous calculated answer" aria-label="Previous answer">ANS</button>
+
+              <button class="key number" data-value="1" type="button">1</button>
+              <button class="key number" data-value="2" type="button">2</button>
+              <button class="key number" data-value="3" type="button">3</button>
+              <button class="key number" data-value="." type="button">.</button>
+              <button class="key action" data-action="copy" type="button" title="COPY — Copy the current result to the clipboard" aria-label="Copy result">COPY</button>
+
+              <button class="key number wide" data-value="0" type="button">0</button>
+              <button class="key number" data-value="00" type="button">00</button>
+              <button class="key action" data-action="evaluate" type="button" title="EXE — Execute/calculate the current expression" aria-label="Execute calculation">EXE</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="history-panel neumorph" aria-label="Calculation history">
+        <div class="history-header">
+          <div>
+            <p class="eyebrow">Your trail</p>
+            <h2>History</h2>
+          </div>
+          <span id="historyCount" class="count-badge">0</span>
+        </div>
+        <div id="historyList" class="history-list">
+          <div class="empty-history">
+            <div class="empty-orbit" aria-hidden="true">↺</div>
+            <p>Every calculation you make will live here.</p>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <footer class="app-footer">
+      <span>Built for quick thinking.</span>
+      <span>Keyboard ready · History saved locally</span>
+    </footer>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
