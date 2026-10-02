@@ -101,7 +101,7 @@ const server = http.createServer((req, res) => {
   sendJson(res, 405, { error: 'Method not allowed' });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`Calcula running at http://localhost:${PORT}`);
   console.log('History API: GET/POST/DELETE /api/history');
 });
