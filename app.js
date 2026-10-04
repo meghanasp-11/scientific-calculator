@@ -601,6 +601,7 @@
   const graphPanDownBtn = $('graphPanDown');
   const graphError = $('graphError');
   const graphInfo = $('graphInfo');
+  const graphCoords = $('graphCoords');
   const graphCanvas = $('graphCanvas');
 
   // If Graph DOM is absent (older cached page), do nothing and keep Calculator working.
@@ -1196,6 +1197,46 @@
     draw();
   }
 
+  // ----- Coordinate inspection (read-only: never redraws, never recompiles) -----
+  let lastCoords = null;
+
+  function fmtCoord(value, range) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
+    const abs = Math.abs(value);
+    if (abs !== 0 && (abs >= 10000 || abs < 0.0001)) return String(Number(value.toPrecision(4)));
+    let decimals = 2;
+    if (range < 0.1) decimals = 4;
+    else if (range < 1) decimals = 3;
+    const text = value.toFixed(decimals);
+    return text.startsWith('-') && Number(text) === 0 ? text.slice(1) : text;
+  }
+
+  function renderCoords() {
+    if (graphCoords) {
+      graphCoords.textContent = lastCoords
+        ? 'x = ' + fmtCoord(lastCoords.x, view.xmax - view.xmin) + ' · y = ' + fmtCoord(lastCoords.y, view.ymax - view.ymin)
+        : 'x = — · y = —';
+    }
+    if (window.__graphTest) window.__graphTest.coords = lastCoords ? { x: lastCoords.x, y: lastCoords.y } : null;
+  }
+
+  function updateCoordsFromEvent(event) {
+    const rect = graphCanvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) { lastCoords = null; renderCoords(); return; }
+    const fx = (event.clientX - rect.left) / rect.width;
+    const fy = (event.clientY - rect.top) / rect.height;
+    lastCoords = {
+      x: view.xmin + fx * (view.xmax - view.xmin),
+      y: view.ymin + (1 - fy) * (view.ymax - view.ymin),
+    };
+    renderCoords();
+  }
+
+  function clearCoords() {
+    lastCoords = null;
+    renderCoords();
+  }
+
   modeCalculatorBtn.addEventListener('click', () => setMode('calculator'));
   modeGraphBtn.addEventListener('click', () => setMode('graph'));
   graphAddBtn.addEventListener('click', () => { addFunctionRow('', true, true); });
@@ -1232,6 +1273,7 @@
     dragState = { x: event.clientX, y: event.clientY, view: { ...view } };
   });
   graphCanvas.addEventListener('pointermove', (event) => {
+    updateCoordsFromEvent(event);
     if (!dragState) return;
     const rect = graphCanvas.getBoundingClientRect();
     const dx = (event.clientX - dragState.x) / Math.max(1, rect.width);
@@ -1247,6 +1289,7 @@
   const endDrag = () => { dragState = null; };
   graphCanvas.addEventListener('pointerup', endDrag);
   graphCanvas.addEventListener('pointercancel', endDrag);
+  graphCanvas.addEventListener('pointerleave', () => { clearCoords(); });
 
   graphCanvas.addEventListener('wheel', (event) => {
     // Require Ctrl/Cmd: an ordinary wheel scroll over the canvas must scroll

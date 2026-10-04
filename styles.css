@@ -544,23 +544,25 @@ h2 { font-size: 24px; color: var(--wine); }
 
 .graph-panel {
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
   border-radius: var(--radius-xl);
-  padding: 13px;
+  padding: 10px;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 10px;
+  gap: 8px;
 }
 .graph-panel[hidden] { display: none; }
 .calculator-panel[hidden] { display: none; }
 
 .graph-controls {
-  padding: 10px;
+  padding: 8px 10px;
   border-radius: 18px;
   background: var(--wine);
   box-shadow: inset 3px 3px 6px var(--shadow-wine-soft), inset -3px -3px 6px var(--shadow-butter);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 .graph-section-title {
   margin: 0;
@@ -572,7 +574,7 @@ h2 { font-size: 24px; color: var(--wine); }
 .graph-function-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 .graph-fn-row {
   display: flex;
@@ -597,7 +599,7 @@ h2 { font-size: 24px; color: var(--wine); }
 .graph-input {
   flex: 1 1 140px;
   min-width: 0;
-  min-height: 40px;
+  min-height: 36px;
   padding: 0 12px;
   border: 0;
   border-radius: 13px;
@@ -644,8 +646,8 @@ h2 { font-size: 24px; color: var(--wine); }
   flex-wrap: wrap;
 }
 .graph-btn {
-  min-height: 36px;
-  padding: 0 14px;
+  min-height: 32px;
+  padding: 0 12px;
   border: 0;
   border-radius: 13px;
   cursor: pointer;
@@ -664,29 +666,41 @@ h2 { font-size: 24px; color: var(--wine); }
 .graph-btn.small { padding: 0 12px; font-size: 14px; }
 .graph-btn:active { transform: translateY(2px); }
 .graph-error {
-  min-height: 18px;
+  min-height: 0;
   font-size: 12px;
   font-weight: 800;
   color: var(--butter);
 }
+.graph-error:empty { display: none; }
 .graph-info {
   font-size: 11px;
   font-weight: 700;
   color: var(--butter);
   opacity: 0.9;
 }
+.graph-coords {
+  min-height: 0;
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--butter);
+}
+.graph-coords:empty { display: none; }
 .graph-canvas-wrap {
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
   border-radius: 22px;
-  padding: 10px;
+  padding: 8px;
   background: var(--butter);
   box-shadow: inset 3px 3px 6px var(--shadow-wine-soft), inset -3px -3px 6px var(--shadow-butter-soft);
-  display: flex;
+  display: grid;
 }
 .graph-canvas {
   width: 100%;
   height: 100%;
-  min-height: 320px;
+  min-height: 220px;
+  min-width: 0;
   border-radius: 14px;
   display: block;
   touch-action: none;
