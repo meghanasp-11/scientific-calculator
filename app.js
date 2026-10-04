@@ -602,6 +602,7 @@
   const graphError = $('graphError');
   const graphInfo = $('graphInfo');
   const graphCoords = $('graphCoords');
+  const graphRootsEl = $('graphRoots');
   const graphCanvas = $('graphCanvas');
 
   // If Graph DOM is absent (older cached page), do nothing and keep Calculator working.
@@ -939,6 +940,115 @@
     return graphToRpn(graphTokenize(trimmed));
   }
 
+  // ----- Roots / x-intercepts (math values via the graph evaluator) -----
+  const ROOT_SAMPLES = 1200;
+
+  function fmtRoot(value) {
+    const rounded = Number(value.toFixed(6));
+    if (Object.is(rounded, -0) || rounded === 0) return '0';
+    return String(rounded);
+  }
+
+  function graphBisect(rpn, a, b, xRange) {
+    let fa;
+    let fb;
+    try { fa = graphEvalRpn(rpn, a); fb = graphEvalRpn(rpn, b); }
+    catch { return null; }
+    if (!Number.isFinite(fa) || !Number.isFinite(fb)) return null;
+    for (let k = 0; k < 80; k++) {
+      const m = 0.5 * (a + b);
+      let fm;
+      try { fm = graphEvalRpn(rpn, m); }
+      catch { return null; }
+      if (!Number.isFinite(fm)) return null;
+      if (fm === 0) return m;
+      if ((fa < 0) !== (fm < 0)) { b = m; fb = fm; }
+      else { a = m; fa = fm; }
+      if (b - a < 1e-12 * Math.max(1, xRange)) break;
+    }
+    return 0.5 * (a + b);
+  }
+
+  function graphRefineMin(rpn, a, b) {
+    const ratio = (Math.sqrt(5) - 1) / 2;
+    const magnitude = (t) => {
+      try {
+        const v = graphEvalRpn(rpn, t);
+        return Number.isFinite(v) ? Math.abs(v) : Infinity;
+      } catch { return Infinity; }
+    };
+    let c = b - ratio * (b - a);
+    let d = a + ratio * (b - a);
+    for (let k = 0; k < 80; k++) {
+      if (magnitude(c) < magnitude(d)) b = d;
+      else a = c;
+      c = b - ratio * (b - a);
+      d = a + ratio * (b - a);
+    }
+    return 0.5 * (a + b);
+  }
+
+  function graphFindRoots(rpn) {
+    const xRange = view.xmax - view.xmin;
+    const yRange = view.ymax - view.ymin;
+    if (!Number.isFinite(xRange) || !Number.isFinite(yRange) || xRange <= 0 || yRange <= 0) return [];
+    const xs = new Array(ROOT_SAMPLES + 1);
+    const ys = new Array(ROOT_SAMPLES + 1);
+    for (let i = 0; i <= ROOT_SAMPLES; i++) {
+      const x = view.xmin + (xRange * i) / ROOT_SAMPLES;
+      let y;
+      try { y = graphEvalRpn(rpn, x); }
+      catch { y = NaN; }
+      xs[i] = x;
+      ys[i] = Number.isFinite(y) ? y : NaN;
+    }
+    // Intervals crossing an asymptote jump far beyond any legitimate slope here.
+    const jumpMax = 5 * yRange;
+    const roots = [];
+    const pushRoot = (value) => {
+      if (!Number.isFinite(value) || value < view.xmin || value > view.xmax) return;
+      const eps = Math.max(1e-9, 1e-7 * xRange);
+      for (const q of roots) {
+        if (Math.abs(q - value) <= eps) return;
+      }
+      roots.push(value);
+    };
+    for (let i = 0; i < ROOT_SAMPLES; i++) {
+      const y1 = ys[i];
+      const y2 = ys[i + 1];
+      if (!Number.isFinite(y1) || !Number.isFinite(y2)) continue;
+      if (Math.abs(y2 - y1) > jumpMax) continue;
+      if (y1 === 0) { pushRoot(xs[i]); continue; }
+      if ((y1 < 0) !== (y2 < 0)) {
+        const root = graphBisect(rpn, xs[i], xs[i + 1], xRange);
+        if (root !== null) pushRoot(root);
+      }
+    }
+    const zeroTol = 1e-9 * Math.max(1, yRange);
+    for (let i = 0; i <= ROOT_SAMPLES; i++) {
+      if (Number.isFinite(ys[i]) && Math.abs(ys[i]) < zeroTol) pushRoot(xs[i]);
+    }
+    // Tangent roots: same sign on both sides with a near-zero local extreme.
+    const vertexTol = 0.02 * yRange;
+    const refineTol = 1e-7 * Math.max(1, yRange);
+    for (let i = 1; i < ROOT_SAMPLES; i++) {
+      const a = ys[i - 1];
+      const b = ys[i];
+      const c = ys[i + 1];
+      if (!Number.isFinite(a) || !Number.isFinite(b) || !Number.isFinite(c)) continue;
+      if (Math.abs(b - a) > jumpMax || Math.abs(c - b) > jumpMax) continue;
+      if ((a < 0) === (c < 0) && Math.abs(b) <= Math.abs(a) && Math.abs(b) <= Math.abs(c) && Math.abs(b) < vertexTol) {
+        const m = graphRefineMin(rpn, xs[i - 1], xs[i + 1]);
+        let fm;
+        try { fm = graphEvalRpn(rpn, m); }
+        catch { continue; }
+        if (Number.isFinite(fm) && Math.abs(fm) < refineTol) pushRoot(m);
+      }
+    }
+    roots.sort((p, q) => p - q);
+    return roots;
+  }
+
   // ----- Rendering -----
   function resizeCanvas() {
     const rect = graphCanvas.getBoundingClientRect();
@@ -1063,6 +1173,25 @@
       totalPlotted += entry.points;
     }
 
+    // Roots: detect per visible function, then mark each x-intercept.
+    for (const entry of graphCompiled) {
+      entry.roots = entry.visible ? graphFindRoots(entry.rpn) : [];
+    }
+    if (view.ymin <= 0 && view.ymax >= 0) {
+      for (const entry of graphCompiled) {
+        if (!entry.visible || !entry.roots.length) continue;
+        ctx.fillStyle = entry.color;
+        ctx.strokeStyle = BUTTER;
+        ctx.lineWidth = 2 * dpr;
+        for (const root of entry.roots) {
+          ctx.beginPath();
+          ctx.arc(toPx(root), toPy(0), 5 * dpr, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
+    }
+
     if (graphLegend) {
       graphLegend.textContent = '';
       for (const entry of graphCompiled) {
@@ -1084,6 +1213,28 @@
       const count = graphCompiled.filter((c) => c.visible).length;
       graphInfo.textContent = `x ∈ [${r2(view.xmin)}, ${r2(view.xmax)}] · y ∈ [${r2(view.ymin)}, ${r2(view.ymax)}] · ${count} plotted`;
     }
+    if (graphRootsEl) {
+      graphRootsEl.textContent = '';
+      if (graphCompiled.length) {
+        const title = document.createElement('div');
+        title.className = 'graph-roots-title';
+        title.textContent = 'Roots';
+        graphRootsEl.appendChild(title);
+        const rooted = graphCompiled.filter((c) => c.visible && c.roots.length);
+        if (!rooted.length) {
+          const line = document.createElement('div');
+          line.className = 'graph-roots-line';
+          line.textContent = 'No visible roots';
+          graphRootsEl.appendChild(line);
+        }
+        for (const entry of rooted) {
+          const line = document.createElement('div');
+          line.className = 'graph-roots-line';
+          line.textContent = entry.label + ': x = ' + entry.roots.map(fmtRoot).join(', x = ');
+          graphRootsEl.appendChild(line);
+        }
+      }
+    }
     window.__graphTest = window.__graphTest || {};
     window.__graphTest.plottedPoints = totalPlotted;
     window.__graphTest.view = { xmin: view.xmin, xmax: view.xmax, ymin: view.ymin, ymax: view.ymax };
@@ -1099,6 +1250,7 @@
         expr: r.inputEl.value,
         visible: r.visible,
         points: compiled && r.visible ? compiled.points : 0,
+        roots: compiled && r.visible ? compiled.roots.slice() : [],
         error: r.error,
         color: r.color,
       };

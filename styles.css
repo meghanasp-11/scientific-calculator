@@ -686,6 +686,23 @@ h2 { font-size: 24px; color: var(--wine); }
   color: var(--butter);
 }
 .graph-coords:empty { display: none; }
+.graph-roots {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.graph-roots:empty { display: none; }
+.graph-roots-title {
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: .13em;
+  color: var(--butter);
+}
+.graph-roots-line {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--butter);
+}
 .graph-canvas-wrap {
   min-height: 0;
   min-width: 0;
