@@ -603,6 +603,7 @@
   const graphInfo = $('graphInfo');
   const graphCoords = $('graphCoords');
   const graphRootsEl = $('graphRoots');
+  const graphYIntEl = $('graphYIntercepts');
   const graphCanvas = $('graphCanvas');
 
   // If Graph DOM is absent (older cached page), do nothing and keep Calculator working.
@@ -1174,21 +1175,39 @@
     }
 
     // Roots: detect per visible function, then mark each x-intercept.
+    // Y-intercepts: evaluate each visible function at x = 0 (kept even when
+    // outside the viewport so markers return on pan/zoom).
     for (const entry of graphCompiled) {
       entry.roots = entry.visible ? graphFindRoots(entry.rpn) : [];
+      entry.yIntercept = null;
+      if (entry.visible) {
+        try {
+          const v0 = graphEvalRpn(entry.rpn, 0);
+          entry.yIntercept = Number.isFinite(v0) ? v0 : null;
+        } catch { entry.yIntercept = null; }
+      }
     }
-    if (view.ymin <= 0 && view.ymax >= 0) {
-      for (const entry of graphCompiled) {
-        if (!entry.visible || !entry.roots.length) continue;
-        ctx.fillStyle = entry.color;
-        ctx.strokeStyle = BUTTER;
-        ctx.lineWidth = 2 * dpr;
+    const zeroYVisible = view.ymin <= 0 && view.ymax >= 0;
+    const zeroXVisible = view.xmin <= 0 && view.xmax >= 0;
+    for (const entry of graphCompiled) {
+      if (!entry.visible) continue;
+      ctx.fillStyle = entry.color;
+      ctx.strokeStyle = BUTTER;
+      ctx.lineWidth = 2 * dpr;
+      if (zeroYVisible && entry.roots.length) {
         for (const root of entry.roots) {
           ctx.beginPath();
           ctx.arc(toPx(root), toPy(0), 5 * dpr, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
         }
+      }
+      if (zeroXVisible && entry.yIntercept !== null && entry.yIntercept !== undefined &&
+          entry.yIntercept >= view.ymin && entry.yIntercept <= view.ymax) {
+        ctx.beginPath();
+        ctx.arc(toPx(0), toPy(entry.yIntercept), 5 * dpr, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
       }
     }
 
@@ -1235,6 +1254,29 @@
         }
       }
     }
+    if (graphYIntEl) {
+      graphYIntEl.textContent = '';
+      if (graphCompiled.length) {
+        const title = document.createElement('div');
+        title.className = 'graph-roots-title';
+        title.textContent = 'Y-intercepts';
+        graphYIntEl.appendChild(title);
+        const shown = graphCompiled.filter((c) => c.visible && c.yIntercept !== null && c.yIntercept !== undefined &&
+          view.xmin <= 0 && view.xmax >= 0 && c.yIntercept >= view.ymin && c.yIntercept <= view.ymax);
+        if (!shown.length) {
+          const line = document.createElement('div');
+          line.className = 'graph-roots-line';
+          line.textContent = 'No visible y-intercepts';
+          graphYIntEl.appendChild(line);
+        }
+        for (const entry of shown) {
+          const line = document.createElement('div');
+          line.className = 'graph-roots-line';
+          line.textContent = entry.label + ': (0, ' + fmtRoot(entry.yIntercept) + ')';
+          graphYIntEl.appendChild(line);
+        }
+      }
+    }
     window.__graphTest = window.__graphTest || {};
     window.__graphTest.plottedPoints = totalPlotted;
     window.__graphTest.view = { xmin: view.xmin, xmax: view.xmax, ymin: view.ymin, ymax: view.ymax };
@@ -1251,6 +1293,7 @@
         visible: r.visible,
         points: compiled && r.visible ? compiled.points : 0,
         roots: compiled && r.visible ? compiled.roots.slice() : [],
+        yIntercept: compiled && r.visible ? compiled.yIntercept : null,
         error: r.error,
         color: r.color,
       };
