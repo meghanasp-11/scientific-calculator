@@ -118,9 +118,10 @@
 
       <section class="graph-panel neumorph" id="graphPanel" aria-label="Graphing calculator" hidden>
         <div class="graph-controls">
-          <div class="graph-input-row">
-            <label class="graph-fx" for="graphInput">f(x) =</label>
-            <input id="graphInput" class="graph-input" type="text" value="x^2" autocomplete="off" spellcheck="false" aria-label="Function of x" />
+          <div class="graph-section-title">FUNCTIONS</div>
+          <div id="graphFunctionList" class="graph-function-list"></div>
+          <div class="graph-btn-row" role="toolbar" aria-label="Function list actions">
+            <button id="graphAdd" class="graph-btn" type="button">+ Add Function</button>
             <button id="graphPlot" class="graph-btn primary" type="button">Plot</button>
           </div>
           <div class="graph-btn-row" role="toolbar" aria-label="Graph actions">
@@ -135,6 +136,7 @@
             <button id="graphPanUp" class="graph-btn small" type="button" aria-label="Pan up">↑</button>
             <button id="graphPanDown" class="graph-btn small" type="button" aria-label="Pan down">↓</button>
           </div>
+          <div id="graphLegend" class="graph-legend" role="group" aria-label="Plotted functions"></div>
           <div id="graphError" class="graph-error" role="status" aria-live="polite"></div>
           <div id="graphInfo" class="graph-info" aria-live="off"></div>
         </div>

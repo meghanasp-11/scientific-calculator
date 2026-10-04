@@ -573,9 +573,13 @@
   const SAMPLES = 800;
 
   const view = { xmin: DEFAULT_VIEW.xmin, xmax: DEFAULT_VIEW.xmax, ymin: DEFAULT_VIEW.ymin, ymax: DEFAULT_VIEW.ymax };
-  let graphRpn = null;
-  let graphExprText = '';
-  let plottedPoints = 0;
+  const MAX_FUNCTIONS = 8;
+  const GRAPH_COLORS = ['#AA1945', '#1F6F5B', '#2B4C9B', '#8A5A00', '#6B2D91', '#0E6E8C', '#4A6B0F', '#333333'];
+  const SUBSCRIPTS = ['₁', '₂', '₃', '₄', '₅', '₆', '₇', '₈'];
+  let graphRows = [];
+  let graphCompiled = [];
+  let graphUid = 0;
+  let totalPlotted = 0;
   let lastError = '';
 
   const $ = (id) => document.getElementById(id);
@@ -583,7 +587,9 @@
   const modeGraphBtn = $('modeGraph');
   const calculatorPanel = $('calculatorPanel');
   const graphPanel = $('graphPanel');
-  const graphInput = $('graphInput');
+  const graphFunctionList = $('graphFunctionList');
+  const graphAddBtn = $('graphAdd');
+  const graphLegend = $('graphLegend');
   const graphPlotBtn = $('graphPlot');
   const graphClearBtn = $('graphClear');
   const graphResetBtn = $('graphReset');
@@ -598,7 +604,7 @@
   const graphCanvas = $('graphCanvas');
 
   // If Graph DOM is absent (older cached page), do nothing and keep Calculator working.
-  if (!modeCalculatorBtn || !modeGraphBtn || !calculatorPanel || !graphPanel || !graphInput || !graphCanvas) {
+  if (!modeCalculatorBtn || !modeGraphBtn || !calculatorPanel || !graphPanel || !graphFunctionList || !graphCanvas) {
     window.__calculaMode = window.__calculaMode || 'calculator';
     return;
   }
@@ -617,6 +623,136 @@
     if (isGraph) {
       requestAnimationFrame(() => { resizeCanvas(); draw(); });
     }
+  }
+
+  // ----- Function rows (Phase 2B: multiple functions) -----
+  function fnLabel(index) {
+    return 'f' + (SUBSCRIPTS[index] || ('_' + (index + 1))) + '(x)';
+  }
+
+  function rowColor(index) {
+    return GRAPH_COLORS[index % GRAPH_COLORS.length];
+  }
+
+  function renumberRows() {
+    graphRows.forEach((row, index) => {
+      const label = fnLabel(index);
+      row.label = label;
+      row.color = rowColor(index);
+      row.labelEl.textContent = label + ' =';
+      row.labelEl.setAttribute('for', 'graphInput' + index);
+      row.inputEl.id = 'graphInput' + index;
+      row.inputEl.setAttribute('aria-label', label);
+      row.toggleBtn.textContent = row.visible ? 'Hide' : 'Show';
+      row.toggleBtn.setAttribute('aria-pressed', String(row.visible));
+      row.toggleBtn.setAttribute('aria-label', (row.visible ? 'Hide ' : 'Show ') + label);
+      row.removeBtn.setAttribute('aria-label', 'Remove ' + label);
+      row.colorEl.style.background = row.color;
+      const compiled = graphCompiled.find((c) => c.uid === row.uid);
+      if (compiled) { compiled.label = label; compiled.color = row.color; }
+    });
+  }
+
+  function setRowError(row, message) {
+    row.error = message || '';
+    row.errorEl.textContent = row.error ? row.label + ': ' + row.error : '';
+    row.rowEl.classList.toggle('invalid', Boolean(row.error));
+  }
+
+  function findRow(uid) {
+    return graphRows.find((r) => r.uid === uid);
+  }
+
+  function addFunctionRow(expr, visible, focusInput) {
+    if (graphRows.length >= MAX_FUNCTIONS) {
+      setError('Maximum ' + MAX_FUNCTIONS + ' functions');
+      draw();
+      return null;
+    }
+    const uid = ++graphUid;
+    const rowEl = document.createElement('div');
+    rowEl.className = 'graph-fn-row';
+    const colorEl = document.createElement('span');
+    colorEl.className = 'graph-fn-color';
+    colorEl.setAttribute('aria-hidden', 'true');
+    const labelEl = document.createElement('label');
+    labelEl.className = 'graph-fx';
+    const inputEl = document.createElement('input');
+    inputEl.className = 'graph-input';
+    inputEl.type = 'text';
+    inputEl.setAttribute('autocomplete', 'off');
+    inputEl.setAttribute('spellcheck', 'false');
+    inputEl.value = expr || '';
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'graph-btn small';
+    toggleBtn.type = 'button';
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'graph-btn small';
+    removeBtn.type = 'button';
+    removeBtn.textContent = 'Remove';
+    const errorEl = document.createElement('div');
+    errorEl.className = 'graph-fn-error';
+    errorEl.setAttribute('role', 'status');
+    rowEl.appendChild(colorEl);
+    rowEl.appendChild(labelEl);
+    rowEl.appendChild(inputEl);
+    rowEl.appendChild(toggleBtn);
+    rowEl.appendChild(removeBtn);
+    graphFunctionList.appendChild(rowEl);
+    graphFunctionList.appendChild(errorEl);
+    const row = {
+      uid: uid, rowEl: rowEl, labelEl: labelEl, colorEl: colorEl,
+      inputEl: inputEl, toggleBtn: toggleBtn, removeBtn: removeBtn,
+      errorEl: errorEl, label: '', color: '', visible: visible !== false, error: '',
+    };
+    toggleBtn.addEventListener('click', () => toggleRow(uid));
+    removeBtn.addEventListener('click', () => removeRow(uid));
+    graphRows.push(row);
+    renumberRows();
+    setError('');
+    draw();
+    if (focusInput) inputEl.focus();
+    return row;
+  }
+
+  function toggleRow(uid) {
+    const row = findRow(uid);
+    if (!row) return;
+    row.visible = !row.visible;
+    row.toggleBtn.textContent = row.visible ? 'Hide' : 'Show';
+    row.toggleBtn.setAttribute('aria-pressed', String(row.visible));
+    row.toggleBtn.setAttribute('aria-label', (row.visible ? 'Hide ' : 'Show ') + row.label);
+    const compiled = graphCompiled.find((c) => c.uid === uid);
+    if (compiled) compiled.visible = row.visible;
+    draw();
+  }
+
+  function removeRow(uid) {
+    const index = graphRows.findIndex((r) => r.uid === uid);
+    if (index < 0) return;
+    // Never remove the final row: leave a valid empty state instead.
+    if (graphRows.length === 1) {
+      const only = graphRows[0];
+      only.inputEl.value = '';
+      only.visible = true;
+      setRowError(only, '');
+      graphCompiled = [];
+      totalPlotted = 0;
+      setError('');
+      renumberRows();
+      draw();
+      only.inputEl.focus();
+      return;
+    }
+    const row = graphRows[index];
+    row.rowEl.remove();
+    row.errorEl.remove();
+    graphRows.splice(index, 1);
+    graphCompiled = graphCompiled.filter((c) => c.uid !== uid);
+    renumberRows();
+    draw();
+    const focusTarget = graphRows[Math.min(index, graphRows.length - 1)];
+    if (focusTarget) focusTarget.inputEl.focus();
   }
 
   // ----- Isolated graph expression parser (radians for trig) -----
@@ -891,11 +1027,13 @@
       ctx.fillText('O', toPx(0) + 4 * dpr, toPy(0) + 4 * dpr);
     }
 
-    // Curve
-    plottedPoints = 0;
-    if (graphRpn) {
+    // Curves (one per visible compiled function, each in its own color)
+    totalPlotted = 0;
+    for (const entry of graphCompiled) {
+      entry.points = 0;
+      if (!entry.visible) continue;
       ctx.lineWidth = 3 * dpr;
-      ctx.strokeStyle = WINE;
+      ctx.strokeStyle = entry.color;
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       ctx.beginPath();
@@ -905,7 +1043,7 @@
         const x = view.xmin + (xRange * s) / (SAMPLES - 1);
         let y;
         try {
-          y = graphEvalRpn(graphRpn, x);
+          y = graphEvalRpn(entry.rpn, x);
         } catch {
           penDown = false;
           continue;
@@ -918,23 +1056,52 @@
         if (!penDown) { ctx.moveTo(px, py); penDown = true; }
         else { ctx.lineTo(px, py); }
         prevPy = py;
-        plottedPoints++;
+        entry.points++;
       }
       ctx.stroke();
+      totalPlotted += entry.points;
+    }
+
+    if (graphLegend) {
+      graphLegend.textContent = '';
+      for (const entry of graphCompiled) {
+        if (!entry.visible) continue;
+        const item = document.createElement('span');
+        item.className = 'graph-legend-item';
+        const dot = document.createElement('span');
+        dot.className = 'graph-legend-dot';
+        dot.style.background = entry.color;
+        dot.setAttribute('aria-hidden', 'true');
+        item.appendChild(dot);
+        item.appendChild(document.createTextNode(entry.label + ' = ' + entry.expr));
+        graphLegend.appendChild(item);
+      }
     }
 
     if (graphInfo) {
       const r2 = (v) => Math.round(v * 100) / 100;
-      graphInfo.textContent = graphRpn
-        ? `x ∈ [${r2(view.xmin)}, ${r2(view.xmax)}] · y ∈ [${r2(view.ymin)}, ${r2(view.ymax)}] · f(x) = ${graphExprText}`
-        : `x ∈ [${r2(view.xmin)}, ${r2(view.xmax)}] · y ∈ [${r2(view.ymin)}, ${r2(view.ymax)}]`;
+      const count = graphCompiled.filter((c) => c.visible).length;
+      graphInfo.textContent = `x ∈ [${r2(view.xmin)}, ${r2(view.xmax)}] · y ∈ [${r2(view.ymin)}, ${r2(view.ymax)}] · ${count} plotted`;
     }
     window.__graphTest = window.__graphTest || {};
-    window.__graphTest.plottedPoints = plottedPoints;
+    window.__graphTest.plottedPoints = totalPlotted;
     window.__graphTest.view = { xmin: view.xmin, xmax: view.xmax, ymin: view.ymin, ymax: view.ymax };
-    window.__graphTest.expr = graphExprText;
-    window.__graphTest.error = lastError;
+    const firstCompiled = graphCompiled.find((c) => c.visible) || null;
+    window.__graphTest.expr = firstCompiled ? firstCompiled.expr : '';
+    const firstRowError = graphRows.find((r) => r.error);
+    window.__graphTest.error = lastError || (firstRowError ? firstRowError.label + ': ' + firstRowError.error : '');
     window.__graphTest.mode = window.__calculaMode;
+    window.__graphTest.functions = graphRows.map((r) => {
+      const compiled = graphCompiled.find((c) => c.uid === r.uid) || null;
+      return {
+        label: r.label,
+        expr: r.inputEl.value,
+        visible: r.visible,
+        points: compiled && r.visible ? compiled.points : 0,
+        error: r.error,
+        color: r.color,
+      };
+    });
   }
 
   function setError(message) {
@@ -943,47 +1110,57 @@
   }
 
   function plot() {
-    const expr = graphInput.value;
-    try {
-      const rpn = graphCompile(expr);
-      // Require at least one plottable point; probe a few x values first.
-      let ok = 0;
-      const probe = [-9, -4, -1, 0, 1, 4, 9];
-      for (const px of probe) {
-        try {
-          const y = graphEvalRpn(rpn, px);
-          if (typeof y === 'number' && Number.isFinite(y)) ok++;
-        } catch { /* try next probe */ }
+    setError('');
+    graphCompiled = [];
+    let anyExpression = false;
+    for (const row of graphRows) {
+      setRowError(row, '');
+      const expr = row.inputEl.value.trim();
+      if (!expr) continue;
+      anyExpression = true;
+      if (!row.visible) continue;
+      try {
+        const rpn = graphCompile(expr);
+        graphCompiled.push({
+          uid: row.uid, label: row.label, expr: expr,
+          rpn: rpn, color: row.color, visible: true, points: 0,
+        });
+      } catch {
+        setRowError(row, 'Unable to plot function');
       }
-      graphRpn = rpn;
-      graphExprText = String(expr).trim();
-      // Even all-NaN probes (e.g. sqrt(x) negative probes) may still plot for x>0;
-      // draw first, then decide: if nothing drawable, keep message.
-      setError('');
+    }
+    if (!anyExpression) {
       draw();
-      if (plottedPoints === 0) {
-        graphRpn = null;
-        graphExprText = '';
-        draw();
-        setError('Unable to plot function');
+      setError('Enter a function, e.g. x²');
+      return;
+    }
+    draw();
+    // Drop entries with nothing drawable and mark their rows, without
+    // disturbing valid curves.
+    let changed = false;
+    for (const entry of graphCompiled) {
+      if (entry.points === 0) {
+        const row = findRow(entry.uid);
+        if (row) setRowError(row, 'Unable to plot function');
+        changed = true;
       }
-    } catch {
-      graphRpn = null;
-      graphExprText = '';
-      plottedPoints = 0;
+    }
+    if (changed) {
+      graphCompiled = graphCompiled.filter((c) => c.points > 0);
       draw();
-      setError('Unable to plot function');
     }
   }
 
   function clearGraph() {
-    graphInput.value = '';
-    graphRpn = null;
-    graphExprText = '';
-    plottedPoints = 0;
+    for (const row of graphRows) {
+      row.inputEl.value = '';
+      setRowError(row, '');
+    }
+    graphCompiled = [];
+    totalPlotted = 0;
     setError('');
     draw();
-    graphInput.focus();
+    if (graphRows[0]) graphRows[0].inputEl.focus();
   }
 
   function resetView() {
@@ -1021,6 +1198,7 @@
 
   modeCalculatorBtn.addEventListener('click', () => setMode('calculator'));
   modeGraphBtn.addEventListener('click', () => setMode('graph'));
+  graphAddBtn.addEventListener('click', () => { addFunctionRow('', true, true); });
   graphPlotBtn.addEventListener('click', plot);
   graphClearBtn.addEventListener('click', clearGraph);
   graphResetBtn.addEventListener('click', resetView);
@@ -1031,9 +1209,12 @@
   graphPanUpBtn.addEventListener('click', () => pan(0, 0.2));
   graphPanDownBtn.addEventListener('click', () => pan(0, -0.2));
 
-  graphInput.addEventListener('keydown', (event) => {
+  graphFunctionList.addEventListener('keydown', (event) => {
     event.stopPropagation();
-    if (event.key === 'Enter') { event.preventDefault(); plot(); }
+    if (event.key === 'Enter' && event.target && event.target.classList.contains('graph-input')) {
+      event.preventDefault();
+      plot();
+    }
   });
 
   graphCanvas.addEventListener('keydown', (event) => {
@@ -1082,11 +1263,13 @@
 
   window.__graphTest = {
     mode: window.__calculaMode,
-    plottedPoints: plottedPoints,
+    plottedPoints: totalPlotted,
     error: lastError,
     view: { xmin: view.xmin, xmax: view.xmax, ymin: view.ymin, ymax: view.ymax },
-    expr: graphExprText,
+    expr: '',
+    functions: [],
   };
 
+  addFunctionRow('x^2', true, false);
   setMode('calculator');
 })();
