@@ -21,16 +21,20 @@
         </div>
       </div>
       <div class="header-actions">
+        <div class="mode-switch" role="tablist" aria-label="Mode">
+          <button id="modeCalculator" class="mode-btn is-active" type="button" role="tab" aria-selected="true">Calculator</button>
+          <button id="modeGraph" class="mode-btn" type="button" role="tab" aria-selected="false">Graph</button>
+        </div>
         <button id="angleToggle" class="pill-btn" type="button" aria-label="Toggle angle mode">DEG</button>
         <button id="clearHistory" class="ghost-btn" type="button">Clear history</button>
       </div>
     </header>
 
-    <section class="workspace" aria-label="Scientific calculator workspace">
-      <section class="calculator-panel neumorph">
+    <section class="workspace" aria-label="Calcula workspace">
+      <section class="calculator-panel neumorph" id="calculatorPanel">
         <div class="display-card neumorph-inset" aria-live="polite">
           <div id="expressionPreview" class="expression-preview">Ready when you are</div>
-          <div id="display" class="display-value">0</div>
+          <div id="display" class="display-value" tabindex="0">0</div>
           <div class="display-meta">
             <span id="memoryIndicator" class="meta-chip hidden">M</span>
             <span id="angleIndicator" class="meta-chip">DEG</span>
@@ -38,7 +42,7 @@
           </div>
         </div>
 
-        <div class="utility-row" id="utilityRow" aria-label="Calculator memory and editing controls">
+        <div class="utility-row" id="utilityRow" role="toolbar" aria-label="Calculator memory and editing controls">
           <button class="utility-btn" data-action="memory-clear" type="button" title="MC — Clear stored memory" aria-label="Memory clear">MC</button>
           <button class="utility-btn" data-action="memory-recall" type="button" title="MR — Recall stored memory" aria-label="Memory recall">MR</button>
           <button class="utility-btn" data-action="memory-add" type="button" title="M+ — Add current value to memory" aria-label="Memory add">M+</button>
@@ -109,6 +113,33 @@
               <button class="key action" data-action="evaluate" type="button" title="EXE — Execute/calculate the current expression" aria-label="Execute calculation">EXE</button>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section class="graph-panel neumorph" id="graphPanel" aria-label="Graphing calculator" hidden>
+        <div class="graph-controls">
+          <div class="graph-input-row">
+            <label class="graph-fx" for="graphInput">f(x) =</label>
+            <input id="graphInput" class="graph-input" type="text" value="x^2" autocomplete="off" spellcheck="false" aria-label="Function of x" />
+            <button id="graphPlot" class="graph-btn primary" type="button">Plot</button>
+          </div>
+          <div class="graph-btn-row" role="toolbar" aria-label="Graph actions">
+            <button id="graphClear" class="graph-btn" type="button">Clear</button>
+            <button id="graphReset" class="graph-btn" type="button">Reset View</button>
+            <button id="graphZoomIn" class="graph-btn" type="button" aria-label="Zoom in">+</button>
+            <button id="graphZoomOut" class="graph-btn" type="button" aria-label="Zoom out">−</button>
+          </div>
+          <div class="graph-btn-row" role="toolbar" aria-label="Graph pan">
+            <button id="graphPanLeft" class="graph-btn small" type="button" aria-label="Pan left">←</button>
+            <button id="graphPanRight" class="graph-btn small" type="button" aria-label="Pan right">→</button>
+            <button id="graphPanUp" class="graph-btn small" type="button" aria-label="Pan up">↑</button>
+            <button id="graphPanDown" class="graph-btn small" type="button" aria-label="Pan down">↓</button>
+          </div>
+          <div id="graphError" class="graph-error" role="status" aria-live="polite"></div>
+          <div id="graphInfo" class="graph-info" aria-live="off"></div>
+        </div>
+        <div class="graph-canvas-wrap neumorph-inset">
+          <canvas id="graphCanvas" class="graph-canvas" tabindex="0" aria-label="Function plot. Use plus and minus buttons to zoom, Control plus mouse wheel to zoom, arrow buttons to pan."></canvas>
         </div>
       </section>
 

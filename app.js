@@ -280,7 +280,7 @@
   };
 
   function tokenize(input) {
-    const normalized = input.replace(/[×x]/g, '*').replace(/[÷]/g, '/').replace(/[−]/g, '-');
+    const normalized = input.replace(/[×]/g, '*').replace(/[÷]/g, '/').replace(/[−]/g, '-');
     const raw = [];
     let i = 0;
 
@@ -309,7 +309,8 @@
         i++;
         while (i < normalized.length && /[A-Za-z]/.test(normalized[i])) i++;
         const word = normalized.slice(start, i).toLowerCase();
-        if (FUNCTIONS.has(word)) raw.push({ type:'function', value:word });
+        if (word === 'x') raw.push({ type:'operator', value:'*' });
+        else if (FUNCTIONS.has(word)) raw.push({ type:'function', value:word });
         else if (word === 'mod') raw.push({ type:'operator', value:'mod' });
         else if (Object.prototype.hasOwnProperty.call(CONSTANTS, word)) raw.push({ type:'constant', value:word });
         else throw new Error(`Unknown token: ${word}`);
@@ -535,6 +536,11 @@
   });
 
   document.addEventListener('keydown', (event) => {
+    const target = event.target;
+    // Isolation: never feed Calculator when typing in a text field (Graph f(x) input).
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+    // Isolation: in Graph mode physical keys belong to Graph; Calculator keeps its state untouched.
+    if (typeof window.__calculaMode !== 'undefined' && window.__calculaMode === 'graph') return;
     const key = event.key;
     if (/\d/.test(key) || key === '.') insert(key);
     else if (key === '+') insert('+');
@@ -552,4 +558,535 @@
 
   render();
   hydrateFromServer();
+})();
+
+// ---------- Graph Mode (isolated from Calculator Mode) ----------
+// Uses its own expression parser/evaluator and view state. It never touches
+// the Calculator's evaluateExpression(), tokenizer, memory, history, display
+// or DEG/RAD state. Calculator DOM is only hidden/shown, never destroyed.
+(() => {
+  'use strict';
+
+  const WINE = '#AA1945';
+  const BUTTER = '#F5E8AA';
+  const DEFAULT_VIEW = { xmin: -10, xmax: 10, ymin: -10, ymax: 10 };
+  const SAMPLES = 800;
+
+  const view = { xmin: DEFAULT_VIEW.xmin, xmax: DEFAULT_VIEW.xmax, ymin: DEFAULT_VIEW.ymin, ymax: DEFAULT_VIEW.ymax };
+  let graphRpn = null;
+  let graphExprText = '';
+  let plottedPoints = 0;
+  let lastError = '';
+
+  const $ = (id) => document.getElementById(id);
+  const modeCalculatorBtn = $('modeCalculator');
+  const modeGraphBtn = $('modeGraph');
+  const calculatorPanel = $('calculatorPanel');
+  const graphPanel = $('graphPanel');
+  const graphInput = $('graphInput');
+  const graphPlotBtn = $('graphPlot');
+  const graphClearBtn = $('graphClear');
+  const graphResetBtn = $('graphReset');
+  const graphZoomInBtn = $('graphZoomIn');
+  const graphZoomOutBtn = $('graphZoomOut');
+  const graphPanLeftBtn = $('graphPanLeft');
+  const graphPanRightBtn = $('graphPanRight');
+  const graphPanUpBtn = $('graphPanUp');
+  const graphPanDownBtn = $('graphPanDown');
+  const graphError = $('graphError');
+  const graphInfo = $('graphInfo');
+  const graphCanvas = $('graphCanvas');
+
+  // If Graph DOM is absent (older cached page), do nothing and keep Calculator working.
+  if (!modeCalculatorBtn || !modeGraphBtn || !calculatorPanel || !graphPanel || !graphInput || !graphCanvas) {
+    window.__calculaMode = window.__calculaMode || 'calculator';
+    return;
+  }
+
+  window.__calculaMode = window.__calculaMode || 'calculator';
+
+  function setMode(mode) {
+    const isGraph = mode === 'graph';
+    window.__calculaMode = isGraph ? 'graph' : 'calculator';
+    calculatorPanel.hidden = isGraph;
+    graphPanel.hidden = !isGraph;
+    modeCalculatorBtn.classList.toggle('is-active', !isGraph);
+    modeGraphBtn.classList.toggle('is-active', isGraph);
+    modeCalculatorBtn.setAttribute('aria-selected', String(!isGraph));
+    modeGraphBtn.setAttribute('aria-selected', String(isGraph));
+    if (isGraph) {
+      requestAnimationFrame(() => { resizeCanvas(); draw(); });
+    }
+  }
+
+  // ----- Isolated graph expression parser (radians for trig) -----
+  const GRAPH_FUNCTIONS = new Set(['sin', 'cos', 'tan', 'sqrt', 'log', 'ln', 'abs', 'cbrt', 'exp']);
+  const GRAPH_CONSTANTS = { pi: Math.PI, e: Math.E, 'π': Math.PI };
+  const GRAPH_OP_INFO = {
+    '+': { p: 1, assoc: 'L' },
+    '-': { p: 1, assoc: 'L' },
+    '*': { p: 2, assoc: 'L' },
+    '/': { p: 2, assoc: 'L' },
+    '^': { p: 4, assoc: 'R' },
+    'u-': { p: 3, assoc: 'R' },
+  };
+
+  function graphTokenize(input) {
+    const normalized = String(input)
+      .replace(/[×]/g, '*')
+      .replace(/[÷]/g, '/')
+      .replace(/[−]/g, '-');
+    const raw = [];
+    let i = 0;
+    while (i < normalized.length) {
+      const ch = normalized[i];
+      if (/\s/.test(ch)) { i++; continue; }
+      if (/\d|\./.test(ch)) {
+        const start = i;
+        let dotSeen = ch === '.';
+        i++;
+        while (i < normalized.length) {
+          const c = normalized[i];
+          if (/\d/.test(c)) { i++; continue; }
+          if (c === '.' && !dotSeen) { dotSeen = true; i++; continue; }
+          break;
+        }
+        const value = Number(normalized.slice(start, i));
+        if (Number.isNaN(value)) throw new Error('Invalid number');
+        raw.push({ type: 'number', value });
+        continue;
+      }
+      if (ch === '*' && normalized[i + 1] === '*') {
+        raw.push({ type: 'operator', value: '^' });
+        i += 2;
+        continue;
+      }
+      if (/[A-Za-zπ]/.test(ch)) {
+        if (ch === 'π') { i++; raw.push({ type: 'constant', value: 'π' }); continue; }
+        const start = i;
+        i++;
+        while (i < normalized.length && /[A-Za-z]/.test(normalized[i])) i++;
+        const word = normalized.slice(start, i).toLowerCase();
+        if (word === 'x') { raw.push({ type: 'variable', value: 'x' }); continue; }
+        if (GRAPH_FUNCTIONS.has(word)) { raw.push({ type: 'function', value: word }); continue; }
+        if (Object.prototype.hasOwnProperty.call(GRAPH_CONSTANTS, word)) { raw.push({ type: 'constant', value: word }); continue; }
+        throw new Error('Unknown token: ' + word);
+      }
+      if (ch === '(') { raw.push({ type: 'leftParen', value: ch }); i++; continue; }
+      if (ch === ')') { raw.push({ type: 'rightParen', value: ch }); i++; continue; }
+      if ('+-*/^'.includes(ch)) { raw.push({ type: 'operator', value: ch }); i++; continue; }
+      throw new Error('Unsupported symbol: ' + ch);
+    }
+
+    // Implicit multiplication: 2x, 2(x+1), (x)(x), x sin(x) etc. Never between fn and its '('.
+    const out = [];
+    for (let j = 0; j < raw.length; j++) {
+      const token = raw[j];
+      const prev = out[out.length - 1];
+      if (prev && graphNeedsImplicitMultiply(prev, token)) out.push({ type: 'operator', value: '*' });
+      out.push(token);
+    }
+    for (let j = 0; j < out.length; j++) {
+      if (out[j].type === 'operator' && out[j].value === '-') {
+        const prev = out[j - 1];
+        if (!prev || prev.type === 'operator' || prev.type === 'leftParen') out[j].value = 'u-';
+      }
+    }
+    return out;
+  }
+
+  function graphNeedsImplicitMultiply(prev, next) {
+    const prevCanEnd = prev.type === 'number' || prev.type === 'variable' || prev.type === 'constant' || prev.type === 'rightParen';
+    const nextCanStart = next.type === 'number' || next.type === 'variable' || next.type === 'constant' || next.type === 'function' || next.type === 'leftParen';
+    if (!prevCanEnd || !nextCanStart) return false;
+    if (prev.type === 'function') return false;
+    return true;
+  }
+
+  function graphToRpn(tokens) {
+    const output = [];
+    const stack = [];
+    let expectingValue = true;
+    for (const token of tokens) {
+      if (token.type === 'number' || token.type === 'constant' || token.type === 'variable') {
+        output.push(token);
+        expectingValue = false;
+        continue;
+      }
+      if (token.type === 'function') { stack.push(token); expectingValue = true; continue; }
+      if (token.type === 'leftParen') { stack.push(token); expectingValue = true; continue; }
+      if (token.type === 'rightParen') {
+        let found = false;
+        while (stack.length) {
+          const top = stack.pop();
+          if (top.type === 'leftParen') { found = true; break; }
+          output.push(top);
+        }
+        if (!found) throw new Error('Mismatched parentheses');
+        if (stack.length && stack[stack.length - 1].type === 'function') output.push(stack.pop());
+        expectingValue = false;
+        continue;
+      }
+      if (token.type === 'operator') {
+        const current = GRAPH_OP_INFO[token.value];
+        if (!current) throw new Error('Unknown operator');
+        if (token.value !== 'u-' && expectingValue) throw new Error('Expression is incomplete');
+        while (stack.length) {
+          const top = stack[stack.length - 1];
+          if (top.type !== 'operator') break;
+          const topInfo = GRAPH_OP_INFO[top.value];
+          const shouldPop = current.assoc === 'L' ? current.p <= topInfo.p : current.p < topInfo.p;
+          if (!shouldPop) break;
+          output.push(stack.pop());
+        }
+        stack.push(token);
+        expectingValue = token.value !== 'u-' ? true : true;
+        continue;
+      }
+    }
+    while (stack.length) {
+      const top = stack.pop();
+      if (top.type === 'leftParen' || top.type === 'rightParen') throw new Error('Mismatched parentheses');
+      output.push(top);
+    }
+    if (expectingValue && output.length) throw new Error('Expression is incomplete');
+    if (!output.length) throw new Error('Empty expression');
+    return output;
+  }
+
+  function graphEvalRpn(rpn, x) {
+    const stack = [];
+    for (const token of rpn) {
+      if (token.type === 'number') stack.push(token.value);
+      else if (token.type === 'variable') stack.push(x);
+      else if (token.type === 'constant') stack.push(GRAPH_CONSTANTS[token.value]);
+      else if (token.type === 'operator') {
+        const op = token.value;
+        if (op === 'u-') {
+          if (!stack.length) throw new Error('Missing value');
+          stack.push(-stack.pop());
+          continue;
+        }
+        if (stack.length < 2) throw new Error('Expression is incomplete');
+        const b = stack.pop();
+        const a = stack.pop();
+        if (op === '+') stack.push(a + b);
+        else if (op === '-') stack.push(a - b);
+        else if (op === '*') stack.push(a * b);
+        else if (op === '/') stack.push(b === 0 ? NaN : a / b);
+        else if (op === '^') stack.push(Math.pow(a, b));
+      } else if (token.type === 'function') {
+        if (!stack.length) throw new Error('Missing value');
+        const a = stack.pop();
+        switch (token.value) {
+          case 'sin': stack.push(Math.sin(a)); break;
+          case 'cos': stack.push(Math.cos(a)); break;
+          case 'tan': stack.push(Math.tan(a)); break;
+          case 'sqrt': stack.push(a < 0 ? NaN : Math.sqrt(a)); break;
+          case 'cbrt': stack.push(Math.cbrt(a)); break;
+          case 'exp': stack.push(Math.exp(a)); break;
+          case 'abs': stack.push(Math.abs(a)); break;
+          case 'log': stack.push(a <= 0 ? NaN : Math.log10(a)); break;
+          case 'ln': stack.push(a <= 0 ? NaN : Math.log(a)); break;
+          default: throw new Error('Unknown function');
+        }
+      }
+    }
+    if (stack.length !== 1) throw new Error('Expression is invalid');
+    return stack[0];
+  }
+
+  function graphCompile(expr) {
+    const trimmed = String(expr || '').trim();
+    if (!trimmed) throw new Error('Empty expression');
+    return graphToRpn(graphTokenize(trimmed));
+  }
+
+  // ----- Rendering -----
+  function resizeCanvas() {
+    const rect = graphCanvas.getBoundingClientRect();
+    const cssW = Math.max(50, Math.floor(rect.width));
+    const cssH = Math.max(200, Math.floor(rect.height || 340));
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    const w = Math.floor(cssW * dpr);
+    const h = Math.floor(cssH * dpr);
+    if (graphCanvas.width !== w || graphCanvas.height !== h) {
+      graphCanvas.width = w;
+      graphCanvas.height = h;
+    }
+  }
+
+  function niceStep(range, targetCount) {
+    const raw = range / Math.max(1, targetCount);
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const norm = raw / mag;
+    let step;
+    if (norm < 1.5) step = 1;
+    else if (norm < 3.5) step = 2;
+    else if (norm < 7.5) step = 5;
+    else step = 10;
+    return step * mag;
+  }
+
+  function draw() {
+    resizeCanvas();
+    const ctx = graphCanvas.getContext('2d');
+    const W = graphCanvas.width;
+    const H = graphCanvas.height;
+    const xRange = view.xmax - view.xmin;
+    const yRange = view.ymax - view.ymin;
+    const toPx = (x) => ((x - view.xmin) / xRange) * W;
+    const toPy = (y) => H - ((y - view.ymin) / yRange) * H;
+
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = BUTTER;
+    ctx.fillRect(0, 0, W, H);
+
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    const xStep = niceStep(xRange, 12);
+    const yStep = niceStep(yRange, 10);
+
+    ctx.lineWidth = 1 * dpr;
+    ctx.strokeStyle = 'rgba(170, 25, 69, 0.16)';
+    ctx.beginPath();
+    for (let gx = Math.ceil(view.xmin / xStep) * xStep; gx <= view.xmax; gx += xStep) {
+      if (Math.abs(gx) < xStep * 1e-9) continue;
+      ctx.moveTo(toPx(gx), 0);
+      ctx.lineTo(toPx(gx), H);
+    }
+    for (let gy = Math.ceil(view.ymin / yStep) * yStep; gy <= view.ymax; gy += yStep) {
+      if (Math.abs(gy) < yStep * 1e-9) continue;
+      ctx.moveTo(0, toPy(gy));
+      ctx.lineTo(W, toPy(gy));
+    }
+    ctx.stroke();
+
+    // Axes
+    ctx.lineWidth = 2 * dpr;
+    ctx.strokeStyle = WINE;
+    ctx.beginPath();
+    if (view.xmin <= 0 && view.xmax >= 0) { ctx.moveTo(toPx(0), 0); ctx.lineTo(toPx(0), H); }
+    if (view.ymin <= 0 && view.ymax >= 0) { ctx.moveTo(0, toPy(0)); ctx.lineTo(W, toPy(0)); }
+    ctx.stroke();
+
+    // Ticks + labels
+    ctx.fillStyle = WINE;
+    ctx.font = `${11 * dpr}px Inter, system-ui, sans-serif`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    const fmt = (v) => {
+      const a = Math.abs(v);
+      if (a !== 0 && (a >= 1000 || a < 0.01)) return v.toExponential(0);
+      return String(Math.round(v * 100) / 100);
+    };
+    for (let gx = Math.ceil(view.xmin / xStep) * xStep; gx <= view.xmax; gx += xStep) {
+      if (Math.abs(gx) < xStep * 1e-9) continue;
+      ctx.fillText(fmt(gx), toPx(gx) + 3 * dpr, toPy(0) + 4 * dpr);
+    }
+    for (let gy = Math.ceil(view.ymin / yStep) * yStep; gy <= view.ymax; gy += yStep) {
+      if (Math.abs(gy) < yStep * 1e-9) continue;
+      ctx.fillText(fmt(gy), toPx(0) + 4 * dpr, toPy(gy) + 3 * dpr);
+    }
+    if (view.xmin <= 0 && view.xmax >= 0 && view.ymin <= 0 && view.ymax >= 0) {
+      ctx.fillText('O', toPx(0) + 4 * dpr, toPy(0) + 4 * dpr);
+    }
+
+    // Curve
+    plottedPoints = 0;
+    if (graphRpn) {
+      ctx.lineWidth = 3 * dpr;
+      ctx.strokeStyle = WINE;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      let penDown = false;
+      let prevPy = 0;
+      for (let s = 0; s < SAMPLES; s++) {
+        const x = view.xmin + (xRange * s) / (SAMPLES - 1);
+        let y;
+        try {
+          y = graphEvalRpn(graphRpn, x);
+        } catch {
+          penDown = false;
+          continue;
+        }
+        if (typeof y !== 'number' || !Number.isFinite(y)) { penDown = false; continue; }
+        const py = toPy(y);
+        const px = toPx(x);
+        if (py < -H * 2 || py > H * 3) { penDown = false; continue; }
+        if (penDown && Math.abs(py - prevPy) > H * 1.2) { penDown = false; }
+        if (!penDown) { ctx.moveTo(px, py); penDown = true; }
+        else { ctx.lineTo(px, py); }
+        prevPy = py;
+        plottedPoints++;
+      }
+      ctx.stroke();
+    }
+
+    if (graphInfo) {
+      const r2 = (v) => Math.round(v * 100) / 100;
+      graphInfo.textContent = graphRpn
+        ? `x ∈ [${r2(view.xmin)}, ${r2(view.xmax)}] · y ∈ [${r2(view.ymin)}, ${r2(view.ymax)}] · f(x) = ${graphExprText}`
+        : `x ∈ [${r2(view.xmin)}, ${r2(view.xmax)}] · y ∈ [${r2(view.ymin)}, ${r2(view.ymax)}]`;
+    }
+    window.__graphTest = window.__graphTest || {};
+    window.__graphTest.plottedPoints = plottedPoints;
+    window.__graphTest.view = { xmin: view.xmin, xmax: view.xmax, ymin: view.ymin, ymax: view.ymax };
+    window.__graphTest.expr = graphExprText;
+    window.__graphTest.error = lastError;
+    window.__graphTest.mode = window.__calculaMode;
+  }
+
+  function setError(message) {
+    lastError = message || '';
+    if (graphError) graphError.textContent = lastError;
+  }
+
+  function plot() {
+    const expr = graphInput.value;
+    try {
+      const rpn = graphCompile(expr);
+      // Require at least one plottable point; probe a few x values first.
+      let ok = 0;
+      const probe = [-9, -4, -1, 0, 1, 4, 9];
+      for (const px of probe) {
+        try {
+          const y = graphEvalRpn(rpn, px);
+          if (typeof y === 'number' && Number.isFinite(y)) ok++;
+        } catch { /* try next probe */ }
+      }
+      graphRpn = rpn;
+      graphExprText = String(expr).trim();
+      // Even all-NaN probes (e.g. sqrt(x) negative probes) may still plot for x>0;
+      // draw first, then decide: if nothing drawable, keep message.
+      setError('');
+      draw();
+      if (plottedPoints === 0) {
+        graphRpn = null;
+        graphExprText = '';
+        draw();
+        setError('Unable to plot function');
+      }
+    } catch {
+      graphRpn = null;
+      graphExprText = '';
+      plottedPoints = 0;
+      draw();
+      setError('Unable to plot function');
+    }
+  }
+
+  function clearGraph() {
+    graphInput.value = '';
+    graphRpn = null;
+    graphExprText = '';
+    plottedPoints = 0;
+    setError('');
+    draw();
+    graphInput.focus();
+  }
+
+  function resetView() {
+    view.xmin = DEFAULT_VIEW.xmin;
+    view.xmax = DEFAULT_VIEW.xmax;
+    view.ymin = DEFAULT_VIEW.ymin;
+    view.ymax = DEFAULT_VIEW.ymax;
+    setError('');
+    draw();
+  }
+
+  function zoom(factor) {
+    const cx = (view.xmin + view.xmax) / 2;
+    const cy = (view.ymin + view.ymax) / 2;
+    const hw = ((view.xmax - view.xmin) / 2) * factor;
+    const hh = ((view.ymax - view.ymin) / 2) * factor;
+    if (!Number.isFinite(hw) || !Number.isFinite(hh) || hw <= 1e-9 || hh <= 1e-9) return;
+    if (hw > 1e9 || hh > 1e9) return;
+    view.xmin = cx - hw;
+    view.xmax = cx + hw;
+    view.ymin = cy - hh;
+    view.ymax = cy + hh;
+    draw();
+  }
+
+  function pan(fracX, fracY) {
+    const w = view.xmax - view.xmin;
+    const h = view.ymax - view.ymin;
+    view.xmin += w * fracX;
+    view.xmax += w * fracX;
+    view.ymin += h * fracY;
+    view.ymax += h * fracY;
+    draw();
+  }
+
+  modeCalculatorBtn.addEventListener('click', () => setMode('calculator'));
+  modeGraphBtn.addEventListener('click', () => setMode('graph'));
+  graphPlotBtn.addEventListener('click', plot);
+  graphClearBtn.addEventListener('click', clearGraph);
+  graphResetBtn.addEventListener('click', resetView);
+  graphZoomInBtn.addEventListener('click', () => zoom(0.7));
+  graphZoomOutBtn.addEventListener('click', () => zoom(1.4));
+  graphPanLeftBtn.addEventListener('click', () => pan(-0.2, 0));
+  graphPanRightBtn.addEventListener('click', () => pan(0.2, 0));
+  graphPanUpBtn.addEventListener('click', () => pan(0, 0.2));
+  graphPanDownBtn.addEventListener('click', () => pan(0, -0.2));
+
+  graphInput.addEventListener('keydown', (event) => {
+    event.stopPropagation();
+    if (event.key === 'Enter') { event.preventDefault(); plot(); }
+  });
+
+  graphCanvas.addEventListener('keydown', (event) => {
+    if (event.key === '+' || event.key === '=') { event.preventDefault(); zoom(0.7); }
+    else if (event.key === '-' || event.key === '_') { event.preventDefault(); zoom(1.4); }
+    else if (event.key === 'ArrowLeft') { event.preventDefault(); pan(-0.2, 0); }
+    else if (event.key === 'ArrowRight') { event.preventDefault(); pan(0.2, 0); }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); pan(0, 0.2); }
+    else if (event.key === 'ArrowDown') { event.preventDefault(); pan(0, -0.2); }
+  });
+
+  let dragState = null;
+  graphCanvas.addEventListener('pointerdown', (event) => {
+    graphCanvas.setPointerCapture(event.pointerId);
+    dragState = { x: event.clientX, y: event.clientY, view: { ...view } };
+  });
+  graphCanvas.addEventListener('pointermove', (event) => {
+    if (!dragState) return;
+    const rect = graphCanvas.getBoundingClientRect();
+    const dx = (event.clientX - dragState.x) / Math.max(1, rect.width);
+    const dy = (event.clientY - dragState.y) / Math.max(1, rect.height);
+    const w = dragState.view.xmax - dragState.view.xmin;
+    const h = dragState.view.ymax - dragState.view.ymin;
+    view.xmin = dragState.view.xmin - dx * w;
+    view.xmax = dragState.view.xmax - dx * w;
+    view.ymin = dragState.view.ymin + dy * h;
+    view.ymax = dragState.view.ymax + dy * h;
+    draw();
+  });
+  const endDrag = () => { dragState = null; };
+  graphCanvas.addEventListener('pointerup', endDrag);
+  graphCanvas.addEventListener('pointercancel', endDrag);
+
+  graphCanvas.addEventListener('wheel', (event) => {
+    // Require Ctrl/Cmd: an ordinary wheel scroll over the canvas must scroll
+    // the page, not silently zoom the view (deep accidental zooms can push
+    // the plotted curve almost entirely out of frame).
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    zoom(event.deltaY > 0 ? 1.15 : 0.87);
+  }, { passive: false });
+
+  window.addEventListener('resize', () => {
+    if (window.__calculaMode === 'graph') { resizeCanvas(); draw(); }
+  });
+
+  window.__graphTest = {
+    mode: window.__calculaMode,
+    plottedPoints: plottedPoints,
+    error: lastError,
+    view: { xmin: view.xmin, xmax: view.xmax, ymin: view.ymin, ymax: view.ymax },
+    expr: graphExprText,
+  };
+
+  setMode('calculator');
 })();
